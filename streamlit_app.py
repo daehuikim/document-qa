@@ -10,7 +10,8 @@ warnings.filterwarnings("ignore", message=".*widget with key.*default value.*")
 st.set_page_config(layout="wide")
 
 # --- Secrets & API Key Configuration ---
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = st.secrets["OPENAI_API_KEY"]
+#api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     st.error("OpenAI API key not found. Set it in .streamlit/secrets.toml or as environment variable OPENAI_API_KEY.")
     st.stop()
