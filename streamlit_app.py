@@ -50,7 +50,7 @@ def generate_questions(context: str) -> list[str]:
     )
     text = response.choices[0].message.content
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return lines[:3]+"나 자신의 창의적인 이야기를 이어나갈래!"
+    return lines[:3]+["나 자신의 창의적인 이야기를 이어나갈래!"]
 
 
 def generate_feedback(raw_text: str, context: str) -> dict:
