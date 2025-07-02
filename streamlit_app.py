@@ -1,6 +1,7 @@
 import streamlit as st
 import openai
 import os
+import ast
 import json
 import re
 import warnings
@@ -67,10 +68,23 @@ def generate_feedback(raw_text: str, context: str) -> dict:
         temperature=0.9,
     )
     content = response.choices[0].message.content
+    content = content.strip()
+    if content.startswith("```"):
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE)
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        return {"errors": ["피드백 생성 중 파싱 오류"], "suggestions": [], "improved": content}
+        pass
+        match = re.search(r"(\{.*\})", content, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        try:
+            return ast.literal_eval(content)
+        except (ValueError, SyntaxError):
+            return {"errors": ["피드백 생성 중 파싱 오류"], "suggestions": [], "improved": content}
 
 # --- State Transition Helpers ---
 
