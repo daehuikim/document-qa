@@ -36,8 +36,8 @@ def generate_images(sections: list[dict]) -> list[str]:
     urls = []
     for sec in sections:
         img_resp = client.images.generate(
-            prompt=f"{sec['title']} 장면을 동화책용 그림체로 그린 일러스트",
-            size="512x512",
+            prompt=f"{sec['title']} 장면을 동화책용 그림체로 그린 일러스트를 생성해줘\n 초등학생들이 만든 이야기책에 들어갈 그림이니 명확하고 이야기에 맞게 생성해줘",
+            size="128x128",
             n=1
         )
         urls.append(img_resp.data[0].url)
@@ -45,18 +45,25 @@ def generate_images(sections: list[dict]) -> list[str]:
 
 # 1-3. PDF 만들기 (FPDF 사용)
 def make_pdf(sections: list[dict], images: list[str]) -> bytes:
-    pdf = FPDF(format='A4')
-    pdf.set_auto_page_break(True, margin=15)
-    for sec, url in zip(sections, images):
+    pdf = FPDF(format='A4', unit='mm', unicode=True)         # unicode=True
+    pdf.add_page()
+    # 1) 한글 지원 글꼴 등록 (예시: 나눔고딕)
+    pdf.add_font(
+        'NanumGothic',                 # 내부 이름
+        '', 
+        '/path/to/NanumGothic.ttf',    # 실제 ttf 파일 경로
+        uni=True
+    )
+    pdf.set_font('NanumGothic', '', 14)
+
+    for sec in sections:
         pdf.add_page()
-        pdf.set_font("Arial", "B", 16)
         pdf.multi_cell(0, 10, sec["title"])
-        # 이미지는 URL→바이트로 가져와야 하나, Streamlit에선 st.download_button에 URL 직접 넣어도 됩니다.
-        # 여기서는 예시로 URL을 이미지 자리에 텍스트로 넣습니다.
         pdf.ln(5)
-        pdf.set_font("Arial", size=12)
         pdf.multi_cell(0, 8, sec["text"])
-    return pdf.output(dest="S").encode("latin1")
+
+    # dest="S" 로 이미 bytes를 돌려주므로 encode() 제거
+    return pdf.output(dest="S")
 
 
 # Page configuration
@@ -373,12 +380,12 @@ elif st.session_state.stage == "review":
         col1, col2, col3 = st.columns(3)
         with col1:
             st.button(
-                "내용 고치기",
+                "답변 고치기",
                 on_click=lambda: st.session_state.__setitem__("edit_mode", True)
             )
         with col2:
             st.button(
-                "이야기 이어 붙이기",
+                "답변 이어 붙이기",
                 on_click=lambda: on_feedback_decision(True)
             )
         with col3:
@@ -388,7 +395,7 @@ elif st.session_state.stage == "review":
                 # 2) switch into edit mode so the textarea becomes active
                 st.session_state.edit_mode = True
 
-            st.button("추천(개선) 버전 사용하기", on_click=_on_apply_improved)
+            st.button("개선된 예시 사용하기", on_click=_on_apply_improved)
     else:
         # ─── 수정 모드 ───
         def _on_edit_submit():
