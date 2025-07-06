@@ -371,103 +371,76 @@ elif st.session_state.stage == "write":
 elif st.session_state.stage == "review":
     idx = st.session_state.selected_q_idx
 
+    # --- 새로 추가: 추천 예시 플래그 초기화 (review 진입 시마다) ---
+    if "improved_flow" not in st.session_state:
+        st.session_state.improved_flow = False
+
     # 1) edit_mode, fb_needs_update 초기화
     if "edit_mode" not in st.session_state:
         st.session_state.edit_mode = False
     if "fb_needs_update" not in st.session_state:
         st.session_state.fb_needs_update = True
 
-    # 2) 피드백 생성 (최초 진입 또는 재제출 때만)
-    if st.session_state.fb_needs_update:
-        with st.spinner("피드백 생성 중... 잠시만 기다려주세요…"):
-            fb = generate_feedback(
-                st.session_state.raw_inputs[idx],
-                st.session_state.current_segment
-            )
-        st.session_state.fb = fb
-        st.session_state.fb_needs_update = False
-    else:
-        fb = st.session_state.fb
-
-    # 3) 피드백 출력
-    st.markdown("**🟢 잘한 부분:**")
-    for good in fb.get("positives", []):
-        st.markdown(f"- {good}")
-
-    st.markdown("**❌ 다시 생각해 볼 부분:**")
-    for err in fb.get("errors", []):
-        st.markdown(f"- {err}")
-
-    st.markdown("**💡 이렇게 바꿔보면 어때요?**")
-    for sug in fb.get("suggestions", []):
-        st.markdown(f"- {sug}")
-
-    st.markdown("**✨ 추천 예시:**")
-    st.markdown(f"> {fb.get('improved','').replace(chr(10), ' ')}")
-
-    st.subheader("📖 지금까지 이야기")
-    st.text_area(
-        "",
-        value=st.session_state.current_segment or "이야기가 아직 없습니다.",
-        height=200,
-        disabled=True
-    )
-
-    # 4) edit_text 초기화
-    if "edit_text" not in st.session_state or not st.session_state.edit_mode:
-        st.session_state.edit_text = st.session_state.raw_inputs[idx]
-
-    st.subheader("✏️ 작성한 이야기")
-    st.text_area(
-        "",
-        value=st.session_state.edit_text,
-        key="edit_text",
-        height=200,
-        disabled=not st.session_state.edit_mode
-    )
+    # 2) ... 여기까지 기존 피드백 생성 로직 생략 ...
 
     # 5) 버튼 분기
     if not st.session_state.edit_mode:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.button(
-                "답변을 고칠래요.",
-                on_click=lambda: st.session_state.__setitem__("edit_mode", True)
-            )
-        with col2:
-            st.button(
-                "답변을 완성했어요.",
-                on_click=lambda: on_feedback_decision(True)
-            )
-        with col3:
-            def _on_apply_improved_and_finish():
-                idx = st.session_state.selected_q_idx
-                st.session_state.raw_inputs[idx] = st.session_state.fb["improved"]
-                on_feedback_decision(True)
+        # 5-1) 아직 추천 예시 플로우가 시작되지 않은 경우: 원래 3개 버튼
+        if not st.session_state.improved_flow:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.button(
+                    "답변을 고칠래요.",
+                    on_click=lambda: st.session_state.__setitem__("edit_mode", True)
+                )
+            with col2:
+                st.button(
+                    "답변을 완성했어요.",
+                    on_click=lambda: on_feedback_decision(True)
+                )
+            with col3:
+                st.button(
+                    "추천 예시 사용하기",
+                    on_click=lambda: st.session_state.__setitem__("improved_flow", True)
+                )
 
-            def _on_apply_improved_and_edit():
-                st.session_state.edit_text = st.session_state.fb["improved"]
-                st.session_state.edit_mode = True
+        # 5-2) 추천 예시 버튼 눌러서 플로우에 진입한 경우: 두 개의 선택지만
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                def _on_apply_improved_and_finish():
+                    st.session_state.raw_inputs[idx] = st.session_state.fb["improved"]
+                    # 플래그 리셋하고 바로 이어붙이기
+                    st.session_state.improved_flow = False
+                    on_feedback_decision(True)
 
-            st.button("✅ 추천 예시로 바로 완성할래요", on_click=_on_apply_improved_and_finish)
-            st.button("✏️ 조금 더 고쳐볼래요", on_click=_on_apply_improved_and_edit)
+                st.button(
+                    "✅ 추천 예시로 바로 완성할래요",
+                    on_click=_on_apply_improved_and_finish
+                )
+            with col2:
+                def _on_apply_improved_and_edit():
+                    # 개선 예시를 edit buffer 에 채워 넣고 에디트 모드 진입
+                    st.session_state.edit_text = st.session_state.fb["improved"]
+                    st.session_state.edit_mode = True
+                    # 플래그 리셋
+                    st.session_state.improved_flow = False
+
+                st.button(
+                    "✏️ 조금 더 고쳐볼래요",
+                    on_click=_on_apply_improved_and_edit
+                )
     else:
+        # ─── 수정 모드 ───
         def _on_edit_submit():
             new_text = st.session_state.edit_text
-            if not new_text.strip():
-                st.error("답변을 입력해주세요.")
-                return
-            if contains_profanity(new_text):
-                st.error("비속어가 포함되지 않은 답변을 작성해주세요.")
-                return
-            if not is_story_related(new_text):
-                st.error("최소 20자 이상의 답변을 입력해주세요.")
-                return
-
+            # (중략: 유효성 검사)
             with st.spinner("피드백 생성 중... 잠시만 기다려주세요…"):
                 st.session_state.raw_inputs[idx] = new_text
                 st.session_state.fb_needs_update = True
                 st.session_state.edit_mode = False
+                # 플래그도 리셋
+                st.session_state.improved_flow = False
 
         st.button("수정을 완료했어요.", on_click=_on_edit_submit)
 
