@@ -8,13 +8,15 @@ warnings.filterwarnings("ignore", message=".*widget with key.*default value.*")
 
 
 def _on_accept_improved():
-    idx = st.session_state.selected_q_idx
-    # 1) raw_inputs 에 추천 예시를 저장
-    st.session_state.raw_inputs[idx] = st.session_state.fb["improved"]
-    # 2) 플래그 리셋
+    # 1) FB에서 받은 improved 문장을 꺼내 붙이기
+    improved = st.session_state.fb["improved"]
+    st.session_state.current_segment += "\n" + improved
+
+    # 2) recommend_phase 초기화
     st.session_state.recommend_phase = False
-    # 3) 다음 단계로
-    on_feedback_decision(True)
+
+    # 3) 다음 단계로 이동
+    st.session_state.stage = "decide_continue"
 
 
 def refine_extension(context: str, extension: str) -> str:
