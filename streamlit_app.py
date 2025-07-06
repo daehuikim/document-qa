@@ -1,18 +1,27 @@
 import streamlit as st
 import openai
-import os
 import ast
 import json
 import re
 import warnings
 warnings.filterwarnings("ignore", message=".*widget with key.*default value.*")
-import io
-from fpdf import FPDF
+
+
+def _on_accept_improved():
+    idx = st.session_state.selected_q_idx
+    # 1) raw_inputs 에 추천 예시를 저장
+    st.session_state.raw_inputs[idx] = st.session_state.fb["improved"]
+    # 2) 플래그 리셋
+    st.session_state.recommend_phase = False
+    # 3) 다음 단계로
+    on_feedback_decision(True)
+
 
 def refine_extension(context: str, extension: str) -> str:
     prompt = (
         "아래 두 부분을 **초등학생이 만든 동화책** 어투로 자연스럽게 이어붙일 수 있게,"
         "말투와 문법을 통일하고, 비속어 없이 다듬어주세요."
+        "작은 따옴표(\')와 큰 따옴표(\")를 적절한 사용법에 맞게 고쳐주도록 고려해줘."
         "\n\n"
         f"■ 앞이야기:\n{context}\n\n"
         f"■ 새로 쓴 부분:\n{extension}\n\n"
@@ -25,61 +34,6 @@ def refine_extension(context: str, extension: str) -> str:
     )
     return resp.choices[0].message.content.strip()
 
-# 1-1. 이야기 → 챕터 소제목+본문 분할
-def generate_sections(story: str) -> list[dict]:
-    prompt = (
-        "아래 이야기를 동화책 형식으로 3~5개의 소제목(챕터)과 각 챕터의 본문으로 나누어, "
-        "JSON으로 반환해주세요.\n\n"
-        "형식 예시:\n"
-        "{\n"
-        '  "sections": [\n'
-        "    {\"title\": \"챕터1 제목\", \"text\": \"챕터1 본문...\"},\n"
-        "    ...  \n"
-        "  ]\n"
-        "}"
-        f"\n\n이야기:\n{story}"
-    )
-    resp = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role":"user","content":prompt}],
-        temperature=0.7
-    )
-    content = resp.choices[0].message.content
-    return json.loads(re.sub(r"^```json|```$", "", content, flags=re.IGNORECASE))["sections"]
-
-# 1-2. 각 챕터에 대해 이미지 생성
-def generate_images(sections: list[dict]) -> list[str]:
-    urls = []
-    for sec in sections:
-        img_resp = client.images.generate(
-            prompt=f"{sec['title']} 장면을 동화책용 그림체로 그린 일러스트를 생성해줘\n 초등학생들이 만든 이야기책에 들어갈 그림이니 명확하고 이야기에 맞게 생성해줘",
-            size="256x256",
-            n=1
-        )
-        urls.append(img_resp.data[0].url)
-    return urls
-
-# 1-3. PDF 만들기 (FPDF 사용)
-def make_pdf(sections: list[dict], images: list[str]) -> bytes:
-    pdf = FPDF(format='A4', unit='mm', unicode=True)         # unicode=True
-    pdf.add_page()
-    # 1) 한글 지원 글꼴 등록 (예시: 나눔고딕)
-    pdf.add_font(
-        'NanumGothic',                 # 내부 이름
-        '', 
-        '/path/to/NanumGothic.ttf',    # 실제 ttf 파일 경로
-        uni=True
-    )
-    pdf.set_font('NanumGothic', '', 14)
-
-    for sec in sections:
-        pdf.add_page()
-        pdf.multi_cell(0, 10, sec["title"])
-        pdf.ln(5)
-        pdf.multi_cell(0, 8, sec["text"])
-
-    # dest="S" 로 이미 bytes를 돌려주므로 encode() 제거
-    return pdf.output(dest="S")
 
 def refine_story_to_childrens_book(story: str) -> str:
     prompt = (
@@ -357,7 +311,7 @@ if st.session_state.stage == "init":
     # ────────────────────────────────────────────────
 
 elif st.session_state.stage == "choose_q":
-    st.subheader("📖 현재까지 이야기")
+    st.subheader("📖 지금까지 이야기")
     st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200,disabled=True)
     st.subheader("다음 전개를 이어갈 질문을 골라주세요:")
     for i, q in enumerate(st.session_state.questions):
@@ -432,28 +386,6 @@ elif st.session_state.stage == "review":
         disabled=not st.session_state.edit_mode
     )
 
-    # 5) 버튼 분기
-    # if not st.session_state.edit_mode:
-    #     col1, col2, col3 = st.columns(3)
-    #     with col1:
-    #         st.button(
-    #             "답변을 고칠래요.",
-    #             on_click=lambda: st.session_state.__setitem__("edit_mode", True)
-    #         )
-    #     with col2:
-    #         st.button(
-    #             "답변을 완성했어요.",
-    #             on_click=lambda: on_feedback_decision(True)
-    #         )
-    #     with col3:
-    #         def _on_apply_improved():
-    #             idx = st.session_state.selected_q_idx
-    #             # 1) 추천 예시를 edit buffer에 넣고
-    #             st.session_state.edit_text = st.session_state.fb["improved"]
-    #             # 2) recommend_phase를 켜서 두 가지 선택지 화면으로 전환
-    #             st.session_state.recommend_phase = True
-
-    #         st.button("추천 예시를 사용할래요.", on_click=_on_apply_improved)
     if not st.session_state.edit_mode:
         # “추천 예시” 누른 직후라면
         if st.session_state.recommend_phase:
@@ -469,10 +401,7 @@ elif st.session_state.stage == "review":
             with col2:
                 st.button(
                     "✅ 이대로 사용할게요",
-                    on_click=lambda: (
-                        st.session_state.__setitem__('recommend_phase', False),
-                        on_feedback_decision(True)
-                    )
+                    on_click=_on_accept_improved
                 )
         # 아직 “추천 예시” 전이라면 (기존 3버튼)
         else:
