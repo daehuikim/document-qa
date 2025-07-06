@@ -65,6 +65,23 @@ def make_pdf(sections: list[dict], images: list[str]) -> bytes:
     # dest="S" 로 이미 bytes를 돌려주므로 encode() 제거
     return pdf.output(dest="S")
 
+def refine_story_to_childrens_book(story: str) -> str:
+    prompt = (
+        "아래 이야기를 **초등학생이 만든 동화책**처럼 읽히도록,"
+        "말투와 문법을 통일하고, 비속어를 모두 제거한"
+        "자연스러운 한국어 이야기로 바꿔주세요."
+        "단, 새로운 내용이나 창의적 요소를 추가하지 말고,"
+        "오직 문장 표현과 어투만 부드럽게 다듬어주세요.\n\n"
+        f"원본 이야기:\n{story}\n\n"
+        "=> 다듬어진 최종 이야기만 텍스트로 출력해주세요."
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.2,
+    )
+    return resp.choices[0].message.content.strip()
+
 
 # Page configuration
 st.set_page_config(layout="wide")
@@ -441,34 +458,40 @@ elif st.session_state.stage == "decide_continue":
 elif st.session_state.stage == "done":
     st.subheader("✅ 최종 완성된 이야기")
     st.text_area("Story", value=st.session_state.current_segment, height=400)
+    # 2-1. 처음 진입 시 한 번만 교정된 이야기 받아오기
+    if "refined_story" not in st.session_state:
+        with st.spinner("최종 이야기를 다듬는 중… 잠시만 기다려주세요"):
+            refined = refine_story_to_childrens_book(st.session_state.current_segment)
+            # session_state 에 저장하고, 이후 스토리북에도 이 버전을 사용
+            st.session_state.refined_story = refined
+            st.session_state.current_segment = refined
+
+    # 2-2. 다듬어진 이야기 보여주기
+    st.subheader("✅ 최종 완성된 이야기")
+    st.text_area("Story", value=st.session_state.refined_story, height=400)
     st.success("이야기가 완성되었습니다! 복사하여 사용하세요.")
-    
-    st.button(
-        "🌟 스토리북으로 보기",
-        on_click=go_storybook  # ← 여기서 바로 상태를 바꿔버립니다
-    )
 
-elif st.session_state.stage == "storybook":
-    story = st.session_state.current_segment
+# elif st.session_state.stage == "storybook":
+#     story = st.session_state.current_segment
 
-    # 3-1. 처음 진입 시: 섹션·이미지 생성
-    if "sections" not in st.session_state:
-        with st.spinner("챕터와 일러스트 생성 중…"):
-            st.session_state.sections = generate_sections(story)
-            st.session_state.images   = generate_images(st.session_state.sections)
+#     # 3-1. 처음 진입 시: 섹션·이미지 생성
+#     if "sections" not in st.session_state:
+#         with st.spinner("챕터와 일러스트 생성 중… (기다려 주세요!)"):
+#             st.session_state.sections = generate_sections(story)
+#             st.session_state.images   = generate_images(st.session_state.sections)
 
-    # 3-2. 화면에 출력
-    for sec, img_url in zip(st.session_state.sections, st.session_state.images):
-        st.markdown(f"### {sec['title']}")
-        st.image(img_url, use_column_width=True)
-        st.write(sec['text'])
-        st.markdown("---")
+#     # 3-2. 화면에 출력
+#     for sec, img_url in zip(st.session_state.sections, st.session_state.images):
+#         st.markdown(f"### {sec['title']}")
+#         st.image(img_url, use_column_width=True)
+#         st.write(sec['text'])
+#         st.markdown("---")
 
-    # 3-3. PDF 다운로드
-    pdf_bytes = make_pdf(st.session_state.sections, st.session_state.images)
-    st.download_button(
-        "📥 PDF로 다운로드",
-        data=pdf_bytes,
-        file_name="storybook.pdf",
-        mime="application/pdf"
-    )
+#     # 3-3. PDF 다운로드
+#     pdf_bytes = make_pdf(st.session_state.sections, st.session_state.images)
+#     st.download_button(
+#         "📥 PDF로 다운로드",
+#         data=pdf_bytes,
+#         file_name="storybook.pdf",
+#         mime="application/pdf"
+#     )
