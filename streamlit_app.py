@@ -6,6 +6,58 @@ import json
 import re
 import warnings
 warnings.filterwarnings("ignore", message=".*widget with key.*default value.*")
+import io
+from fpdf import FPDF
+
+# 1-1. 이야기 → 챕터 소제목+본문 분할
+def generate_sections(story: str) -> list[dict]:
+    prompt = (
+        "아래 이야기를 동화책 형식으로 3~5개의 소제목(챕터)과 각 챕터의 본문으로 나누어, "
+        "JSON으로 반환해주세요.\n\n"
+        "형식 예시:\n"
+        "{\n"
+        '  "sections": [\n'
+        "    {\"title\": \"챕터1 제목\", \"text\": \"챕터1 본문...\"},\n"
+        "    ...  \n"
+        "  ]\n"
+        "}"
+        f"\n\n이야기:\n{story}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.7
+    )
+    content = resp.choices[0].message.content
+    return json.loads(re.sub(r"^```json|```$", "", content, flags=re.IGNORECASE))["sections"]
+
+# 1-2. 각 챕터에 대해 이미지 생성
+def generate_images(sections: list[dict]) -> list[str]:
+    urls = []
+    for sec in sections:
+        img_resp = client.images.generate(
+            prompt=f"{sec['title']} 장면을 동화책용 그림체로 그린 일러스트",
+            size="512x512",
+            n=1
+        )
+        urls.append(img_resp.data[0].url)
+    return urls
+
+# 1-3. PDF 만들기 (FPDF 사용)
+def make_pdf(sections: list[dict], images: list[str]) -> bytes:
+    pdf = FPDF(format='A4')
+    pdf.set_auto_page_break(True, margin=15)
+    for sec, url in zip(sections, images):
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 16)
+        pdf.multi_cell(0, 10, sec["title"])
+        # 이미지는 URL→바이트로 가져와야 하나, Streamlit에선 st.download_button에 URL 직접 넣어도 됩니다.
+        # 여기서는 예시로 URL을 이미지 자리에 텍스트로 넣습니다.
+        pdf.ln(5)
+        pdf.set_font("Arial", size=12)
+        pdf.multi_cell(0, 8, sec["text"])
+    return pdf.output(dest="S").encode("latin1")
+
 
 # Page configuration
 st.set_page_config(layout="wide")
@@ -58,10 +110,10 @@ def generate_feedback(raw_text: str, context: str) -> dict:
         "다음은 이야기 맥락과 사용자가 작성한 부분입니다.\n"
         f"맥락:\n{context}\n"
         f"사용자 작성:\n{raw_text}\n\n"
-        "이 텍스트의 *틀린 부분*(errors)과 *고칠 방법*(suggestions), "
+       "이 텍스트의 *잘한 부분*(positives), *틀린 부분*(errors), *고칠 방법*(suggestions), "
         "그리고 *개선된 버전*(improved) 세 가지를 반드시 JSON 객체 형식으로 반환해주세요.\n"
         "이 피드백은 초등학생들을 위한 피드백임으로 초등학생들이 이해하기 쉽게 기초적인 내용으로 반드시 한국어로만 작성해주세요\n"
-        "예시 형식:\n{\n  \"errors\": [...], \"suggestions\": [...], \"improved\": \"...\"\n}"
+        "예시 형식:\n{\n  \"positives\": [...], \"errors\": [...], \"suggestions\": [...], \"improved\": \"...\"\n}"
     )
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -181,8 +233,8 @@ def decide_continue(continue_story: bool):
 example_title=[
     "✅ 1. **시간**의 흐름에 따라 요약",
     "✅ 2. **장소**의 이동에 따라 요약",
-    "✅ 3. **이야기 구조**에 따라 요약 (발단–전개–위기–절정–결말)",
-    "✅ 4. **육하원칙**에 따라 요약 (누가, 언제, 어디서, 무엇을, 어떻게, 왜)",
+    "✅ 3. **이야기 구조**에 따라 요약 \n\n(발단–전개–위기–절정–결말)",
+    "✅ 4. **육하원칙**에 따라 요약 \n\n(누가, 언제, 어디서, 무엇을, 어떻게, 왜)",
     "✅ 5. **등장인물** 중심 요약"
 ]
 
@@ -260,7 +312,7 @@ elif st.session_state.stage == "write":
         height=200
     )
     st.button(
-        "제출",
+        "작성한 이야기 이어붙이기!",
         on_click=lambda t=user_text: _on_raw_submit_with_spinner(t)
     )
 
@@ -287,6 +339,13 @@ elif st.session_state.stage == "review":
         fb = st.session_state.fb
 
     # 3) 피드백 출력
+    st.subheader(f"📖 지금까지 이야기")
+    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200)
+    
+    st.markdown("**🟢 잘한 부분 (positives):**")
+    for good in fb.get("positives", []):
+        st.markdown(f"- {good}")
+    
     st.markdown("**❌ 틀린 부분 (errors):**")
     for err in fb.get("errors", []):
         st.markdown(f"- {err}")
@@ -314,12 +373,12 @@ elif st.session_state.stage == "review":
         col1, col2, col3 = st.columns(3)
         with col1:
             st.button(
-                "수정하기",
+                "내용 고치기",
                 on_click=lambda: st.session_state.__setitem__("edit_mode", True)
             )
         with col2:
             st.button(
-                "완료하기",
+                "이야기 이어 붙이기",
                 on_click=lambda: on_feedback_decision(True)
             )
         with col3:
@@ -329,7 +388,7 @@ elif st.session_state.stage == "review":
                 # 2) switch into edit mode so the textarea becomes active
                 st.session_state.edit_mode = True
 
-            st.button("개선 버전 적용하기", on_click=_on_apply_improved)
+            st.button("추천(개선) 버전 사용하기", on_click=_on_apply_improved)
     else:
         # ─── 수정 모드 ───
         def _on_edit_submit():
@@ -355,7 +414,7 @@ elif st.session_state.stage == "review":
                 st.session_state.edit_mode = False
 
         # on_click에 콜백만 연결하면 single-click 동작
-        st.button("제출하기", on_click=_on_edit_submit)
+        st.button("이야기 이어 붙이기", on_click=_on_edit_submit)
 
 elif st.session_state.stage == "decide_continue":
     st.subheader("📖 지금까지 이어진 이야기")
@@ -371,3 +430,31 @@ elif st.session_state.stage == "done":
     st.subheader("✅ 최종 완성된 이야기")
     st.text_area("Story", value=st.session_state.current_segment, height=400)
     st.success("이야기가 완성되었습니다! 복사하여 사용하세요.")
+    
+    if st.button("🌟 스토리북으로 보기"):
+        st.session_state.stage = "storybook"
+
+elif st.session_state.stage == "storybook":
+    story = st.session_state.current_segment
+
+    # 3-1. 처음 진입 시: 섹션·이미지 생성
+    if "sections" not in st.session_state:
+        with st.spinner("챕터와 일러스트 생성 중…"):
+            st.session_state.sections = generate_sections(story)
+            st.session_state.images   = generate_images(st.session_state.sections)
+
+    # 3-2. 화면에 출력
+    for sec, img_url in zip(st.session_state.sections, st.session_state.images):
+        st.markdown(f"### {sec['title']}")
+        st.image(img_url, use_column_width=True)
+        st.write(sec['text'])
+        st.markdown("---")
+
+    # 3-3. PDF 다운로드
+    pdf_bytes = make_pdf(st.session_state.sections, st.session_state.images)
+    st.download_button(
+        "📥 PDF로 다운로드",
+        data=pdf_bytes,
+        file_name="storybook.pdf",
+        mime="application/pdf"
+    )
