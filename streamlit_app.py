@@ -9,6 +9,22 @@ warnings.filterwarnings("ignore", message=".*widget with key.*default value.*")
 import io
 from fpdf import FPDF
 
+def refine_extension(context: str, extension: str) -> str:
+    prompt = (
+        "아래 두 부분을 **초등학생이 만든 동화책** 어투로 자연스럽게 이어붙일 수 있게,"
+        "말투와 문법을 통일하고, 비속어 없이 다듬어주세요."
+        "\n\n"
+        f"■ 앞이야기:\n{context}\n\n"
+        f"■ 새로 쓴 부분:\n{extension}\n\n"
+        "=> 다듬어진 ‘새로 쓴 부분’만 출력해주세요."
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0.3,
+    )
+    return resp.choices[0].message.content.strip()
+
 # 1-1. 이야기 → 챕터 소제목+본문 분할
 def generate_sections(story: str) -> list[dict]:
     prompt = (
@@ -239,7 +255,15 @@ def handle_raw_submit(text: str):
 def on_feedback_decision(is_done: bool):
     idx = st.session_state.selected_q_idx
     if is_done or st.session_state.feedback_counts[idx] >= 2:
-        st.session_state.current_segment += "\n" + st.session_state.raw_inputs[idx]
+        # 1) 원본 앞이야기
+        context = st.session_state.current_segment
+        # 2) 사용자가 쓴 새 부분
+        ext = st.session_state.raw_inputs[idx]
+        # 3) 톤 통일 다듬기
+        refined_ext = refine_extension(context, ext)
+        # 4) 붙이기
+        st.session_state.current_segment += "\n" + refined_ext
+        # 5) 다음으로
         st.session_state.stage = "decide_continue"
     else:
         st.session_state.feedback_counts[idx] += 1
@@ -323,7 +347,7 @@ if st.session_state.stage == "init":
 
 elif st.session_state.stage == "choose_q":
     st.subheader("📖 현재까지 이야기")
-    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200)
+    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200,disabled=True)
     st.subheader("다음 전개를 이어갈 질문을 골라주세요:")
     for i, q in enumerate(st.session_state.questions):
         st.button(q, key=f"q{i}", on_click=lambda i=i: choose_question(i))
@@ -331,7 +355,7 @@ elif st.session_state.stage == "choose_q":
 elif st.session_state.stage == "write":
     idx = st.session_state.selected_q_idx
     st.subheader(f"📖 지금까지 이야기")
-    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200)
+    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200,disabled=True)
     st.subheader(f"질문: {st.session_state.questions[idx]}")
     user_text = st.text_area(
         "답변 입력",
@@ -339,7 +363,7 @@ elif st.session_state.stage == "write":
         height=200
     )
     st.button(
-        "작성한 이야기 이어붙이기!",
+        "답변을 완성했어요.",
         on_click=lambda t=user_text: _on_raw_submit_with_spinner(t)
     )
 
@@ -367,34 +391,35 @@ elif st.session_state.stage == "review":
 
     # 3) 피드백 출력
        
-    st.markdown("**🟢 잘한 부분 (positives):**")
+    st.markdown("**🟢 잘한 부분:**")
     for good in fb.get("positives", []):
         st.markdown(f"- {good}")
     
-    st.markdown("**❌ 틀린 부분 (errors):**")
+    st.markdown("**❌ 다시 생각해볼 부분:**")
     for err in fb.get("errors", []):
         st.markdown(f"- {err}")
 
-    st.markdown("**💡 고칠 방법 (suggestions):**")
+    st.markdown("**💡 이렇게 바꿔보면 어때요?**")
     for sug in fb.get("suggestions", []):
         st.markdown(f"- {sug}")
 
-    st.markdown("**✨ 개선된 예시:**")
+    st.markdown("**✨ 추천 예시:**")
     st.markdown(f"> {fb.get('improved','').replace(chr(10), ' ')}")
     
     st.subheader(f"📖 지금까지 이야기")
-    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200)
+    st.text_area("", value=st.session_state.current_segment or "이야기가 아직 없습니다.", height=200,disabled=True)
  
 
     # 4) edit_text 초기화
     if "edit_text" not in st.session_state or not st.session_state.edit_mode:
         st.session_state.edit_text = st.session_state.raw_inputs[idx]
 
-    st.subheader("✏️ 답변 입력")
+    st.subheader("✏️ 작성한 이야기")
     st.text_area(
         "",                # 라벨 텍스트
         key="edit_text",   # value= 절대 쓰지 않습니다
-        height=200
+        height=200,
+        disabled=True
     )
 
     # 5) 버튼 분기
@@ -402,22 +427,23 @@ elif st.session_state.stage == "review":
         col1, col2, col3 = st.columns(3)
         with col1:
             st.button(
-                "답변 고치기",
+                "답변을 고칠래요.",
                 on_click=lambda: st.session_state.__setitem__("edit_mode", True)
             )
         with col2:
             st.button(
-                "완료하기",
+                "답변을 완성했어요.",
                 on_click=lambda: on_feedback_decision(True)
             )
         with col3:
             def _on_apply_improved():
+                idx = st.session_state.selected_q_idx
                 # 1) put the improved version into the edit buffer
                 st.session_state.edit_text = st.session_state.fb["improved"]
                 # 2) switch into edit mode so the textarea becomes active
-                st.session_state.edit_mode = True
+                on_feedback_decision(True)
 
-            st.button("개선된 예시 사용하기", on_click=_on_apply_improved)
+            st.button("추천 예시를 사용할래요.", on_click=_on_apply_improved)
     else:
         # ─── 수정 모드 ───
         def _on_edit_submit():
@@ -447,7 +473,7 @@ elif st.session_state.stage == "review":
 
 elif st.session_state.stage == "decide_continue":
     st.subheader("📖 지금까지 이어진 이야기")
-    st.text_area("", value=st.session_state.current_segment, height=300)
+    st.text_area("", value=st.session_state.current_segment, height=300,disabled=True)
     st.subheader("이야기를 계속 이어쓰시겠습니까?")
     col1, col2 = st.columns(2)
     with col1:
@@ -457,7 +483,7 @@ elif st.session_state.stage == "decide_continue":
 
 elif st.session_state.stage == "done":
     st.subheader("✅ 최종 완성된 이야기")
-    st.text_area("Story", value=st.session_state.current_segment, height=400)
+    st.text_area("Story", value=st.session_state.current_segment, height=400,disabled=True)
     # 2-1. 처음 진입 시 한 번만 교정된 이야기 받아오기
     if "refined_story" not in st.session_state:
         with st.spinner("최종 이야기를 다듬는 중… 잠시만 기다려주세요"):
@@ -468,7 +494,7 @@ elif st.session_state.stage == "done":
 
     # 2-2. 다듬어진 이야기 보여주기
     st.subheader("✅ 최종 완성된 이야기")
-    st.text_area("Story", value=st.session_state.refined_story, height=400)
+    st.text_area("Story", value=st.session_state.refined_story, height=400,disabled=True)
     st.success("이야기가 완성되었습니다! 복사하여 사용하세요.")
 
 # elif st.session_state.stage == "storybook":
