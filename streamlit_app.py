@@ -270,8 +270,8 @@ if 'recommend_phase' not in st.session_state:
 
 # --- UI Flow ---
 if st.session_state.stage == "init":
-    st.title("🖋️ AI와 상호 작용하여 이어지는 이야기를 완성해보자!")
-    st.write("아래 예시를 참고하거나, 직접 이야기 요약을 입력한 뒤 시작하세요.")
+    st.title("🖋️ 인터랙티브 스토리로 만드는 나만의 이야기")
+    st.write("이야기를 쓰기 전에, 앞에서 어떤 일이 있었는지 요약해서 써 보세요. 아래 예시를 참고해도 좋아요!")
 
     # ─── 중앙에 입력창 + 버튼 ───────────────────────
     c1, c2, c3 = st.columns([1, 8, 1])
