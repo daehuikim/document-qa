@@ -377,7 +377,7 @@ elif st.session_state.stage == "review":
  
 
     # 4) edit_text 초기화
-    if "edit_text" not in st.session_state or not st.session_state.edit_mode:
+    if "edit_text" not in st.session_state:
         st.session_state.edit_text = st.session_state.raw_inputs[idx]
 
     st.subheader("✏️ 작성한 이야기")
